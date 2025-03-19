@@ -4,8 +4,12 @@ import csv
 import shutil
 import subprocess
 import sys
+import os
+import re
+
 
 import qdarktheme
+
 from PySide6.QtCore import QSettings
 from PySide6.QtCore import Qt
 from PySide6.QtCore import QUrl
@@ -45,7 +49,7 @@ from src.Widgets import AnalyserWidget
 from src.Widgets import Graph
 from src.Widgets import PixmapWidget
 from src.Widgets import TableUnit
-
+from src.surface_mapping_ui import SurfaceMappingDialog
 
 # Define the main window
 class MainWindow(QMainWindow):  # type: ignore
@@ -70,6 +74,11 @@ class MainWindow(QMainWindow):  # type: ignore
         self.cycle_dialog = CyclicMeasurementSetupWindow(self)
         self.cycle_dialog.onMeasurementTrigger.connect(self.on_cyclic_measurement)
         file_menu.addAction(cycle_action)
+
+        # Create a new menu option
+        surface_mapping_action = QAction("Surface Mapping", self)
+        surface_mapping_action.triggered.connect(self.open_surface_mapping)  # ✅ Attach to method
+        self.menuBar().addMenu("Tools").addAction(surface_mapping_action)
 
         # websocket server action
         websocket_action = QAction("Socket Server", self)
@@ -104,10 +113,20 @@ class MainWindow(QMainWindow):  # type: ignore
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
+
+
+        
+
+        self.farleft_splitter = QSplitter()
         # Widgets
         self.left_splitter = QSplitter()
         self.middle_splitter = QSplitter()
         self.right_splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        self.setup_surface_mapping_panel()  # ✅ Add this line to initialize the panel
+        
+        surface_map_widget = QGroupBox("Surface Map")
+
         sensor_feed_widget = QGroupBox("Sensor Feed")
         analyser_widget = QGroupBox("Analyser")
         sampler_widget = QGroupBox("Sampler")
@@ -163,8 +182,14 @@ class MainWindow(QMainWindow):  # type: ignore
         self.sample_btn.setToolTip(tt["samples"])
         self.replace_btn = QPushButton("Replace")
         self.replace_btn.setToolTip(tt["replace"])
-        self.delete_btn = QPushButton("Delete")
+        self.delete_btn = QPushButton("Clear")
+        
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.setToolTip("Clear all measuremnts from sample table")
+
         self.delete_btn.setDisabled(True)
+        self.reset_btn.setDisabled(False)  # ✅ Ensure it's enabled
+
         self.sample_btn.setDisabled(True)
         self.replace_btn.setDisabled(True)
         self.sample_table = QTableWidget()
@@ -182,9 +207,10 @@ class MainWindow(QMainWindow):  # type: ignore
         sample_layout.addWidget(QLabel("Sensor Width (mm)"), 1, 2, 1, 2, alignment=Qt.AlignRight)
         sample_layout.addWidget(self.sensor_width_spin, 1, 4, 1, 1)
         sample_layout.addWidget(self.zero_btn, 2, 0, 1, 1)
-        sample_layout.addWidget(self.sample_btn, 2, 1, 1, 2)
-        sample_layout.addWidget(self.replace_btn, 2, 3, 1, 1)
-        sample_layout.addWidget(self.delete_btn, 2, 4, 1, 1)
+        sample_layout.addWidget(self.sample_btn, 2, 1, 1, 1)
+        sample_layout.addWidget(self.replace_btn, 2, 2, 1, 1)
+        sample_layout.addWidget(self.delete_btn, 2, 3, 1, 1)
+        sample_layout.addWidget(self.reset_btn, 2, 4, 1, 1)  # ✅ Added to the right of Delete
         sample_layout.addWidget(self.sample_table, 3, 0, 1, 5)
         sampler_widget.setLayout(sample_layout)
 
@@ -243,6 +269,8 @@ class MainWindow(QMainWindow):  # type: ignore
         self.sample_btn.clicked.connect(self.sample_btn_cmd)
         self.replace_btn.clicked.connect(self.replace_btn_cmd)
         self.delete_btn.clicked.connect(self.delete_btn_cmd)
+        self.reset_btn.clicked.connect(self.reset_sample_table)  # Connect action
+
         self.core.OnSubsampleProgressUpdate.connect(self.subsample_progress_update)
         self.core.OnSampleComplete.connect(self.finished_subsample)
         self.core.OnSampleComplete.connect(self.update_table)
@@ -301,6 +329,14 @@ class MainWindow(QMainWindow):  # type: ignore
 
         self.status_bar.showMessage("Loading first camera", 1000)  # 3 seconds
 
+    def setup_surface_mapping_panel(self):
+        """
+        Adds the Surface Mapping Panel to the left-hand side of the MainWindow.
+        """
+        self.surface_mapping_panel = SurfaceMappingDialog(self)
+    # ✅ Ensure the panel appears on the left by adding it to `left_splitter`
+        self.left_splitter.insertWidget(0, self.surface_mapping_panel)
+
     def smoothing_value(self, val: float) -> None:
         self.status_bar.showMessage(f"Smoothing: {val}", 1000)  # 3 seconds
 
@@ -335,6 +371,13 @@ class MainWindow(QMainWindow):  # type: ignore
         self.core.OnSampleComplete.connect(self.socket_server_sample_complete)
 
         self.socket_dialog.show()
+
+    def open_surface_mapping(self):
+        """Opens the Surface Mapping UI and ensures it is initialized."""
+        if not hasattr(self, "surface_mapping_ui") or self.surface_mapping_ui is None:
+            self.surface_mapping_ui = SurfaceMappingDialog(self)  # ✅ Create the instance
+
+        self.surface_mapping_ui.show()  # ✅ Show the dialog
 
     def socket_server_sample_complete(self) -> None:
         # Zeroing out samples
@@ -378,7 +421,31 @@ class MainWindow(QMainWindow):  # type: ignore
         checked_button = self.graph_mode_group.checkedButton()
         self.graph.set_mode(checked_button.text())
 
+    def get_unique_filename(self, base_filename="latest_measurement.csv"):
+        """Ensures that data is always appended to the latest existing file."""
+
+        file_base, file_ext = os.path.splitext(base_filename)
+
+        # ✅ Check if the base file exists and use it
+        if os.path.exists(base_filename):
+            return base_filename
+
+        # ✅ If no base file, check for the latest version
+        version = 1
+        latest_file = base_filename  # Default to base filename if no versions exist
+
+        while os.path.exists(f"{file_base}_v{version}{file_ext}"):
+            latest_file = f"{file_base}_v{version}{file_ext}"
+            version += 1
+
+        # ✅ Return the latest existing file (or base file if no versions exist)
+        return latest_file
+
     def update_table(self) -> None:
+        """
+        Updates the QTableWidget with the latest measurement data.
+        This function no longer writes to external files.
+        """
         units = self.core.units
         header_names = [
             f"Measured ({units})",
@@ -386,32 +453,107 @@ class MainWindow(QMainWindow):  # type: ignore
             f"Below Max ({units})",
             f"Above Min ({units})",
         ]
+
         self.sample_table.setColumnCount(len(header_names))
         self.sample_table.setHorizontalHeaderLabels(header_names)
         header = self.sample_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
 
-        # Delete the rows
+        # Clear the table UI
         self.sample_table.setRowCount(0)
 
         for sample in self.core.samples:
-            # Check if there are enough rows in the table widget, and add a new row if necessary
-            if sample.x >= self.sample_table.rowCount():
-                self.sample_table.insertRow(sample.x)
+            row_index = self.sample_table.rowCount()
+            self.sample_table.insertRow(row_index)
 
-            for col, val in enumerate([sample.y, sample.linYError, sample.shim, sample.scrape]):
-                # measured value
+            row_data = [sample.y, sample.linYError, sample.shim, sample.scrape]
+            
+            for col, val in enumerate(row_data):
                 cell = TableUnit()
                 cell.value = val
                 cell.units = self.core.units
-                self.sample_table.setItem(sample.x, col, cell)
+                self.sample_table.setItem(row_index, col, cell)
 
-        # if there are rows and nothing is selected: select an index
+        # Maintain UI selection
         if self.sample_table.rowCount() and not self.sample_table.selectedIndexes():
             self.sample_table.selectRow(0)
 
         self.sample_table.selectRow(self.table_selected_index)
         self.graph.update_graph()
+        print("Table updated successfully.")
+
+    def reset_sample_table(self):
+        """Clears all entries in the sample table."""
+        confirm = QMessageBox.question(
+            self, "Confirm Reset", "Are you sure you want to clear all sample data?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+
+        if confirm == QMessageBox.Yes:
+            self.sample_table.setRowCount(0)  # ✅ Clears all rows
+            print("[DEBUG] Sample Table Reset: All entries cleared.")
+
+
+
+    def compute_overall_measurement(self):
+        """
+        Compute the average, min, and max measurement from the sample table.
+        """
+        print("[DEBUG] compute_overall_measurement() called!")
+
+        values = []
+        pattern = re.compile(r"[-+]?\d*\.?\d+")  # Extract numeric values
+
+        for row in range(self.sample_table.rowCount()):
+            item = self.sample_table.item(row, 1)  # First column (Flattened Value)
+            if item:
+                text_value = item.text().strip()  
+                match = pattern.search(text_value)  
+
+                if match:
+                    try:
+                        numeric_value = float(match.group())  
+                        values.append(numeric_value)
+                        print(f"[DEBUG] Extracted {numeric_value} from '{text_value}'")  
+                    except ValueError:
+                        print(f"[WARNING] Could not convert '{text_value}' to a number.")  
+                else:
+                    print(f"[WARNING] No numeric data found in '{text_value}'")  
+
+        if values:
+            avg_value = sum(values) / len(values)
+            min_value = min(values)
+            max_value = max(values)
+            count = len(values)
+        else:
+            avg_value = None
+            min_value = None
+            max_value = None
+            count = 0
+
+        print(f"[DEBUG] Computed Measurement - Avg: {avg_value}, Min: {min_value}, Max: {max_value}, Count: {count}")
+        return avg_value, min_value, max_value, count  # ✅ Return all values as a tuple
+
+    
+    def export_measurement_to_mapping(self):
+        """Sends computed average measurement to Surface Mapping UI."""
+        
+        # 🔥 Debug: Ensure this function is running
+        print("🔥 export_measurement_to_mapping() is being called!")
+        avg_value, min_value, max_value = self.compute_overall_measurement()
+        
+        # 🔥 Debug: Print computed values
+        print(f"✅ Computed Values -> Avg: {avg_value}, Min: {min_value}, Max: {max_value}")
+        
+
+        # ✅ Ensure Surface Mapping UI is open before sending data
+        if hasattr(self, "surface_mapping_ui") and self.surface_mapping_ui:
+            self.surface_mapping_ui.handle_measurement_import(avg_value)
+        else:
+                print("❌ Error: Surface Mapping UI is not open!")
+                QMessageBox.warning(self, "Error", "Surface Mapping UI is not open.")
+
+
 
     def finished_subsample(self) -> None:
         """
@@ -489,13 +631,35 @@ class MainWindow(QMainWindow):  # type: ignore
         self.core.start_sample(self.setting_zero, replacing_sample=True, replacing_sample_index=index)
 
     def delete_btn_cmd(self) -> None:
-        self.table_selected_index = self.sample_table.currentRow()
+        """Prompts user with a single dialog offering to delete a selected sample or all samples."""
 
-        self.core.delete_sample(self.table_selected_index)
+        num_rows = self.sample_table.rowCount()  # Total number of samples
+        selected_indexes = self.sample_table.selectionModel().selectedRows()  # Get selected rows
 
-        self.table_selected_index -= 1
-        self.update_table()
+        if num_rows == 0:
+            QMessageBox.information(self, "No Samples", "There are no samples to delete.")
+            return  # No samples to delete
 
+        # Create a custom question dialog with two buttons
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Delete Samples")
+        msg_box.setText("What do you want to delete?")
+        delete_selected_btn = msg_box.addButton("Delete Selected Sample", QMessageBox.AcceptRole)
+        delete_all_btn = msg_box.addButton("Delete All Samples", QMessageBox.DestructiveRole)
+        cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+        msg_box.exec_()
+
+        if msg_box.clickedButton() == delete_selected_btn and selected_indexes:
+            selected_row = selected_indexes[0].row()  # Get first selected row
+            self.core.delete_samples(selected_row)  # Delete selected sample
+            self.sample_table.removeRow(selected_row)  # Remove from UI
+            self.update_table()  # Refresh UI
+
+        elif msg_box.clickedButton() == delete_all_btn:
+            self.core.delete_samples()  # Delete all samples
+            self.sample_table.setRowCount(0)  # Clear the table UI
+            self.update_table()  # Refresh UI
+            
     def closeEvent(self, event: QCloseEvent) -> None:
         print("In close event")
         self.settings = QSettings("laser-level-webcam", "LaserLevelWebcam")
@@ -506,7 +670,12 @@ class MainWindow(QMainWindow):  # type: ignore
         self.settings.setValue("outlier", self.outlier_spin.value())
         self.settings.setValue("units", self.units_combo.currentIndex())
         self.settings.setValue("raw", self.raw_radio.isChecked())
-
+        """Ensure all QThreads are safely closed before exiting."""
+        self.core.workerThread.quit()
+        self.core.workerThread.wait()
+        self.core.sampleWorkerThread.quit()
+        self.core.sampleWorkerThread.wait()
+        event.accept()
         self.settings.setValue("left_splitter", self.left_splitter.sizes())
         self.settings.setValue("middle_splitter", self.middle_splitter.sizes())
         self.settings.setValue("right_splitter", self.right_splitter.sizes())
@@ -524,7 +693,8 @@ class MainWindow(QMainWindow):  # type: ignore
 
 def start() -> None:
     app = QApplication(sys.argv)
-    qdarktheme.setup_theme(additional_qss="QToolTip {color: black;}")
+    qdarktheme.load_stylesheet("dark")
+    
 
     window = MainWindow()
 
@@ -534,3 +704,4 @@ def start() -> None:
 
 if __name__ == "__main__":
     start()
+

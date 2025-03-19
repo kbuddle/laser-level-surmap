@@ -107,18 +107,26 @@ class Core(QObject):  # type: ignore
         self.captureSession.setVideoSink(QVideoSink(self))
         self.captureSession.videoSink().videoFrameChanged.connect(self.onFramePassedFromCamera)
         self.frameSender.OnFrameChanged.connect(self.frameWorker.setVideoFrame)
-
-    def delete_sample(self, index: int) -> None:
+        
+    def delete_samples(self, index: int = None) -> None:
+        """Deletes all samples or a specific sample if an index is provided."""
         debug = False
+
         if debug:
             print(f"num samples = {len(self.samples)}")
             print(f"Before: {self.samples=}")
 
-        del self.samples[index]
+        if index is not None:
+            if 0 <= index < len(self.samples):  # Ensure index is valid
+                del self.samples[index]
 
-        # Fix the indexes
-        for index, sample in enumerate(self.samples):
-            sample.x = index
+                # Fix the indexes after deletion
+                for i, sample in enumerate(self.samples):
+                    sample.x = i  # Recalculate x values
+            else:
+                raise IndexError("Index out of range")
+        else:
+            self.samples.clear()  # Clear all samples
 
         if debug:
             print(f"After: {self.samples=}")

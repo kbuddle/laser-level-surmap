@@ -36,30 +36,59 @@ class CyclicMeasurementSetupWindow(QDialog):  # type: ignore
 
         # Widgets
         self.cycle_time_sb = QSpinBox(self)
-        self.cycle_time_sb.setValue(60)
-        self.cycle_time_sb.setMinimum(10)
+        self.cycle_time_sb.setValue(10)
+        self.cycle_time_sb.setMinimum(5 )
         self.cycle_time_sb.setMaximum(3600)
+        fl.addRow("Cycle time (s)", self.cycle_time_sb)
+
+        # Total Duration Input
+        self.total_duration_sb = QSpinBox(self)
+        self.total_duration_sb.setValue(60)  # Default 60s
+        self.total_duration_sb.setMinimum(5)  # Minimum 5s
+        self.total_duration_sb.setMaximum(3600)  # Max 1 hour
+        fl.addRow("Total duration (s)", self.total_duration_sb)
+
+
 
         self.pb_start = QPushButton("Start", self)
-
         self.pb_stop = QPushButton("Stop", self)
         self.pb_stop.setEnabled(False)
 
-        # Add Widgets
-        fl.addRow("Cycle time (s)", self.cycle_time_sb)
         fl.addRow(self.pb_start, self.pb_stop)
 
-        # Logic
+        # Timer Setup
+        self.cycle_timer = QTimer(self)
+        self.cycle_timer.timeout.connect(self.on_timer_tick)
+
+        # State Tracking
+        self.elapsed_cycles = 0  # Track elapsed cycles
+
+        # Button Logic
         self.pb_start.released.connect(self.start_cycle)
         self.pb_stop.released.connect(self.stop_cycle)
-        self.cycle_timer = QTimer(self)
-        self.cycle_timer.timeout.connect(self.onMeasurementTrigger)
-
+        
     def start_cycle(self) -> None:
-        self.cycle_timer.setInterval(1000 * self.cycle_time_sb.value())
+        """
+        Starts the cyclic measurement process based on the cycle time and total duration.
+        """
+        self.elapsed_cycles = 0  # Reset counter
+        self.cycle_timer.setInterval(1000 * self.cycle_time_sb.value())  # Convert to milliseconds
         self.cycle_timer.start()
+
         self.pb_start.setEnabled(False)
         self.pb_stop.setEnabled(True)
+
+    def on_timer_tick(self) -> None:
+        """
+        Handles the timer event, triggers measurement, and stops when duration is met.
+        """
+        self.onMeasurementTrigger.emit()  # Emit the signal for measurement
+        self.elapsed_cycles += 1
+
+        # Calculate total allowed cycles based on duration
+        max_cycles = self.total_duration_sb.value() // self.cycle_time_sb.value()
+        if self.elapsed_cycles >= max_cycles:
+            self.stop_cycle()
 
     def stop_cycle(self) -> None:
         self.cycle_timer.stop()
