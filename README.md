@@ -2,6 +2,8 @@
 <div align="center">
 <h1>LaserVision: Real-time Laser Measurement with a Webcam</h1>
 
+NOTE this is effectively an informal fork of bhowie/laser-level-webcam. It has been desighned to revert back to creating a map of a whole surface plate, using the scrape and shim concepts that were part of the original coding for measurement. This is likely to result in additional and superfluous code as a new coder using ChatGPT assistants, my learning curve has been steep.
+
 See the GitHub Discussions tab for questions, comments, etc. I'll try to track progress updates over there now.
 
 This is the software component in building a highly accurate measurement device primarily used in a similar way to a surface plate. Sofar measurements are attainable between 0.5um - 2um in repeated measurements.
