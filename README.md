@@ -2,7 +2,7 @@
 <div align="center">
 <h1>LaserVision: Real-time Laser Measurement with a Webcam</h1>
 
-NOITE this is effectively an informal fork of bhowie/laser-level-webcam. It has been desighned to revert back to creating a map of a whole surface plate, usion ghte scrape and shim concepts that were part of the original coding for measurement. This is likelyt to resulty in additional and superfluous code as a new coder using ChatGPT assistants, my learning curve has been steep.
+NOTE this is effectively an informal fork of bhowie/laser-level-webcam. It has been desighned to revert back to creating a map of a whole surface plate, using the scrape and shim concepts that were part of the original coding for measurement. This is likely to result in additional and superfluous code as a new coder using ChatGPT assistants, my learning curve has been steep.
 
 
 
