@@ -7,6 +7,7 @@ import sys
 import os
 import re
 
+import numpy as np
 
 import qdarktheme
 
@@ -50,6 +51,11 @@ from src.Widgets import Graph
 from src.Widgets import PixmapWidget
 from src.Widgets import TableUnit
 from src.surface_mapping_ui import SurfaceMappingDialog
+
+def extract_numeric_value(text):
+        """Extract numeric values from a string, ignoring units (e.g., μm)."""
+        match = re.search(r"[-+]?\d*\.?\d+", text)  # Matches floats (including negative values)
+        return float(match.group()) if match else None  # Convert to float if found
 
 # Define the main window
 class MainWindow(QMainWindow):  # type: ignore
@@ -450,8 +456,8 @@ class MainWindow(QMainWindow):  # type: ignore
         header_names = [
             f"Measured ({units})",
             f"Flattened ({units})",
-            f"Below Max ({units})",
-            f"Above Min ({units})",
+            f"Shim ({units})",
+            f"Scrape ({units})",
         ]
 
         self.sample_table.setColumnCount(len(header_names))
@@ -493,48 +499,79 @@ class MainWindow(QMainWindow):  # type: ignore
             self.sample_table.setRowCount(0)  # ✅ Clears all rows
             print("[DEBUG] Sample Table Reset: All entries cleared.")
 
+    def collect_measurement_data(self, row_index=None):
+        """
+        ✅ Extracts raw measurement data from the sample table without computing averages.
+        This function simply collects the data for storage and visualization.
+        """
+        print(f"\n🔍 [DEBUG] collect_measurement_data() called! Row Index: {row_index}")
+
+        if row_index is None or row_index >= self.sample_table.rowCount():
+            print("❌ [DEBUG] Invalid row index! Exiting function.")
+            return None, None, None, None, None, None, None, None, None
+
+        # ✅ Extract values directly from the sample table
+        item = self.sample_table.item(row_index, 0)  # ✅ Measured Avg
+        shim_item = self.sample_table.item(row_index, 2)  # ✅ Shim Value
+        scrape_item = self.sample_table.item(row_index, 3)  # ✅ Scrape Value
+
+        measured_avg = extract_numeric_value(item.text().strip()) if item else None
+        min_value, max_value = measured_avg, measured_avg  # ✅ No computation, just raw values
+        shim_value = extract_numeric_value(shim_item.text().strip()) if shim_item else None
+        scrape_value = extract_numeric_value(scrape_item.text().strip()) if scrape_item else None
+
+        # ✅ Debug output
+        print(f"  📝 [DEBUG] Extracted Data from Row {row_index}:")
+        print(f"     - Measured Avg: {measured_avg}")
+        print(f"     - Shim Value: {shim_value}")
+        print(f"     - Scrape Value: {scrape_value}")
+
+        return measured_avg, min_value, max_value, shim_value, shim_value, shim_value, scrape_value, scrape_value, scrape_value
 
 
-    def compute_overall_measurement(self):
+    def compute_overall_measurement(self, row_index=None):
         """
-        Compute the average, min, and max measurement from the sample table.
+        ✅ Compute the average, min, and max measurement from the selected sample row.
+        If row_index is None, process all samples.
         """
+
         print("[DEBUG] compute_overall_measurement() called!")
 
-        values = []
-        pattern = re.compile(r"[-+]?\d*\.?\d+")  # Extract numeric values
-
+        values, shim_values, scrape_values = [],[],[]
+        
         for row in range(self.sample_table.rowCount()):
-            item = self.sample_table.item(row, 1)  # First column (Flattened Value)
-            if item:
-                text_value = item.text().strip()  
-                match = pattern.search(text_value)  
+            # ✅ If a specific row index is provided, only process that row
+            if row_index is not None and row != row_index:
+                continue  
 
-                if match:
-                    try:
-                        numeric_value = float(match.group())  
-                        values.append(numeric_value)
-                        print(f"[DEBUG] Extracted {numeric_value} from '{text_value}'")  
-                    except ValueError:
-                        print(f"[WARNING] Could not convert '{text_value}' to a number.")  
-                else:
-                    print(f"[WARNING] No numeric data found in '{text_value}'")  
+            item = self.sample_table.item(row, 0)  # ✅ Column 0 = Measured Avg
+            shim_item = self.sample_table.item(row, 2)  # ✅ Shim Value
+            scrape_item = self.sample_table.item(row, 3)  # ✅ Scrape Value
 
+            numeric_value = extract_numeric_value(item.text().strip()) if item else None
+            if numeric_value is not None:
+                values.append(numeric_value)
+
+            shim_numeric = extract_numeric_value(shim_item.text().strip()) if shim_item else None
+            if shim_numeric is not None:
+                shim_values.append(shim_numeric)
+
+            scrape_numeric = extract_numeric_value(scrape_item.text().strip()) if scrape_item else None
+            if scrape_numeric is not None:
+                scrape_values.append(scrape_numeric)
+        
+        # ✅ Compute stats only if values exist
         if values:
-            avg_value = sum(values) / len(values)
-            min_value = min(values)
-            max_value = max(values)
-            count = len(values)
+            avg_value, min_value, max_value = np.mean(values), min(values), max(values)
+            avg_shim, min_shim, max_shim = np.mean(shim_values), min(shim_values), max(shim_values) if shim_values else (None, None, None)
+            avg_scrape, min_scrape, max_scrape = np.mean(scrape_values), min(scrape_values), max(scrape_values) if scrape_values else (None, None, None)
         else:
-            avg_value = None
-            min_value = None
-            max_value = None
-            count = 0
+            return None, None, None, None, None, None, None, None, None
 
-        print(f"[DEBUG] Computed Measurement - Avg: {avg_value}, Min: {min_value}, Max: {max_value}, Count: {count}")
-        return avg_value, min_value, max_value, count  # ✅ Return all values as a tuple
+        return avg_value, min_value, max_value, avg_shim, min_shim, max_shim, avg_scrape, min_scrape, max_scrape
 
-    
+
+
     def export_measurement_to_mapping(self):
         """Sends computed average measurement to Surface Mapping UI."""
         
@@ -548,7 +585,7 @@ class MainWindow(QMainWindow):  # type: ignore
 
         # ✅ Ensure Surface Mapping UI is open before sending data
         if hasattr(self, "surface_mapping_ui") and self.surface_mapping_ui:
-            self.surface_mapping_ui.handle_measurement_import(avg_value)
+            self.surface_mapping_ui.handle_measurement_import(avg_value, min_value, max_value, count)
         else:
                 print("❌ Error: Surface Mapping UI is not open!")
                 QMessageBox.warning(self, "Error", "Surface Mapping UI is not open.")
